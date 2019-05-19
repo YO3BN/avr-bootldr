@@ -28,13 +28,7 @@
 
 uint8_t uart_buf[280];
 void (*app_start)(void) = 0x0000;
-
-
-struct __attribute__ ((packed))
-{
-	uint16_t address;	/* bytes for EEPROM ; words for FLASH */
-	char loaded;
-} programming_attributes;
+uint16_t prog_address;	/* bytes for EEPROM ; words pages for FLASH */
 
 
 
@@ -73,15 +67,22 @@ void program_flash(void *pvdata, uint16_t uslen)
 }
 
 
-void program_eeprom(void *pvdata, uint16_t uslen)
+void inline program_eeprom(const void *pvdata, uint16_t uslen)
 {
+	/*
+	 * maybe it is incremented in eeprom_write_block(),
+	 * thus creating a backup variable;
+	 */
+	uint16_t tmp_addr = prog_address;
 
+	eeprom_write_block(pvdata, &tmp_addr, uslen);
 }
+
 
 #if 0 /* not yet needed */
 void quick_fail_response(void)
 {
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		uint8_t status;
@@ -98,7 +99,7 @@ void quick_fail_response(void)
 
 void quick_ok_response(void)
 {
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		uint8_t status;
@@ -128,7 +129,7 @@ void inline get_sync(void)
  */
 void get_sign_on(void)
 {
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		char sign_on_message[7];
@@ -163,7 +164,7 @@ void get_sign_on(void)
  */
 void load_address(void)
 {
-	struct __attribute__ ((packed)) request
+	struct request
 	{
 		uint8_t cmd;
 		union
@@ -177,10 +178,8 @@ void load_address(void)
 
 	prequest = (struct request*) uart_buf;
 
-	programming_attributes.loaded = 1;
-
 	/* TODO:: check for right endian ordering!! */
-	programming_attributes.address = prequest->u16.address;
+	prog_address = prequest->u16.address;
 
 	quick_ok_response();
 }
@@ -194,14 +193,14 @@ void load_address(void)
  */
 void get_parameter(void)
 {
-	struct __attribute__ ((packed)) request
+	struct request
 	{
 		uint8_t cmd;
 		uint8_t parameter;
 		uint8_t eop;
 	} *prequest;
 
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		uint8_t value;
@@ -245,7 +244,7 @@ void get_parameter(void)
  */
 void program_page(void)
 {
-	struct __attribute__ ((packed)) request
+	struct request
 	{
 		uint8_t cmd;
 		union
@@ -279,7 +278,7 @@ void program_page(void)
  */
 void read_signature_bytes(void)
 {
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		uint8_t sign_high;
@@ -308,7 +307,7 @@ void read_signature_bytes(void)
  */
 void read_osc_cal(void)
 {
-	struct __attribute__ ((packed)) response
+	struct response
 	{
 		uint8_t insync;
 		uint8_t osc_cal_byte;
@@ -335,49 +334,53 @@ int main(void)
 //	}
 //
 //	uart_init();
-//	uart_recv();
 
-	switch (uart_buf[0])
+	for (;;)
 	{
+		//	uart_recv();
 
-	/* Check if Starterkit Present */
-	case Cmnd_STK_GET_SIGN_ON:
-		get_sign_on();
-		break;
+		switch (uart_buf[0])
+		{
 
-	/* Get Synchronization */
-	case Cmnd_STK_GET_SYNC:
-		get_sync();
-		break;
+		/* Check if Starterkit Present */
+		case Cmnd_STK_GET_SIGN_ON:
+			get_sign_on();
+			break;
 
-	/* Load Address */
-	case Cmnd_STK_LOAD_ADDRESS:
-		load_address();
-		break;
+		/* Get Synchronization */
+		case Cmnd_STK_GET_SYNC:
+			get_sync();
+			break;
 
-	/* Get Parameter Value */
-	case Cmnd_STK_GET_PARAMETER:
-		get_parameter();
-		break;
+		/* Load Address */
+		case Cmnd_STK_LOAD_ADDRESS:
+			load_address();
+			break;
 
-	/* Program Page */
-	case Cmnd_STK_PROG_PAGE:
-		program_page();
-		break;
+		/* Get Parameter Value */
+		case Cmnd_STK_GET_PARAMETER:
+			get_parameter();
+			break;
 
-	/* Read Device Signature */
-	case Cmnd_STK_READ_SIGN:
-		read_signature_bytes();
-		break;
+		/* Program Page */
+		case Cmnd_STK_PROG_PAGE:
+			program_page();
+			break;
 
-	/* Read Oscillator Calibration Byte */
-	case Cmnd_STK_READ_OSCCAL:
-		read_osc_cal();
-		break;
+		/* Read Device Signature */
+		case Cmnd_STK_READ_SIGN:
+			read_signature_bytes();
+			break;
 
-	default:
-		quick_ok_response();
-		break;
+		/* Read Oscillator Calibration Byte */
+		case Cmnd_STK_READ_OSCCAL:
+			read_osc_cal();
+			break;
+
+		default:
+			quick_ok_response();
+			break;
+		}
 	}
 
 	return 0;
