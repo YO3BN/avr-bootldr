@@ -44,7 +44,7 @@ void uart_send(void *pvdata, uint16_t uslen)
 }
 
 
-void boot_program_page (uint32_t page, uint8_t *buf)
+void program_flash_page(uint32_t page, uint8_t *buf)
 {
     uint16_t i, w;
 
@@ -229,6 +229,7 @@ void get_parameter(void)
 		presponse->value = SW_MINOR;
 		break;
 
+	/* Other parameters not supported yet */
 	default:
 		presponse->status = Resp_STK_FAILED;
 		break;
@@ -319,7 +320,7 @@ void read_osc_cal(void)
 	presponse->insync = Resp_STK_INSYNC;
 	presponse->status = Resp_STK_OK;
 
-	/* TODO:: not sure if this shoulld be the answer */
+	/* TODO:: not sure if this should be the answer */
 	presponse->osc_cal_byte = boot_signature_byte_get(0x0001);
 
 	uart_send(presponse, sizeof(*presponse));
