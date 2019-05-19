@@ -26,9 +26,9 @@
 #warning "!!!!!!!! MCU does not have SIGRD. Using dummy 5 !!!!!!!!"
 #endif
 
-uint8_t uart_buf[280];
 void (*app_start)(void) = 0x0000;
-uint16_t prog_address;	/* bytes for EEPROM ; words pages for FLASH */
+static volatile uint8_t uart_buf[280];
+volatile uint16_t prog_address;	/* bytes for EEPROM ; words pages for FLASH */
 
 
 
@@ -38,49 +38,7 @@ void uart_send(void *pvdata, uint16_t uslen)
 }
 
 
-void program_flash_page(uint32_t page, uint8_t *buf)
-{
-    uint16_t i, w;
-
-    eeprom_busy_wait ();
-    boot_page_erase (page);
-    boot_spm_busy_wait ();      // Wait until the memory is erased.
-    for (i=0; i<SPM_PAGESIZE; i+=2)
-    {
-        // Set up little-endian word.
-        w = *buf++;
-        w += (*buf++) << 8;
-
-        boot_page_fill (page + i, w);
-    }
-    boot_page_write (page);     // Store buffer in flash page.
-    boot_spm_busy_wait();       // Wait until the memory is written.
-    // Reenable RWW-section again. We need this if we want to jump back
-    // to the application after bootloading.
-    boot_rww_enable ();
-}
-
-
-void program_flash(void *pvdata, uint16_t uslen)
-{
-
-}
-
-
-void inline program_eeprom(const void *pvdata, uint16_t uslen)
-{
-	/*
-	 * maybe it is incremented in eeprom_write_block(),
-	 * thus creating a backup variable;
-	 */
-	uint16_t tmp_addr = prog_address;
-
-	eeprom_write_block(pvdata, &tmp_addr, uslen);
-}
-
-
-#if 0 /* not yet needed */
-void quick_fail_response(void)
+static void quick_fail_response(void)
 {
 	struct response
 	{
@@ -95,9 +53,9 @@ void quick_fail_response(void)
 
 	uart_send(presponse, sizeof(*presponse));
 }
-#endif
 
-void quick_ok_response(void)
+
+static void quick_ok_response(void)
 {
 	struct response
 	{
@@ -113,13 +71,23 @@ void quick_ok_response(void)
 	uart_send(presponse, sizeof(*presponse));
 }
 
-/*
- * Use this command to try to regain synchronization when sync is lost.
- * Send this command until Resp_STK_INSYNC is received.
- */
-void inline get_sync(void)
+
+static void quick_byte_response(uint8_t byte)
 {
-	quick_ok_response();
+	struct response
+	{
+		uint8_t insync;
+		uint8_t byte;
+		uint8_t status;
+	} *presponse;
+
+	presponse = (struct response*) uart_buf;
+
+	presponse->byte = byte;
+	presponse->insync = Resp_STK_INSYNC;
+	presponse->status = Resp_STK_OK;
+
+	uart_send(presponse, sizeof(*presponse));
 }
 
 
@@ -127,7 +95,7 @@ void inline get_sync(void)
  * The PC sends this command to check if the starterkit is present on
  * the communication channel.
  */
-void get_sign_on(void)
+static void get_sign_on(void)
 {
 	struct response
 	{
@@ -162,7 +130,7 @@ void get_sign_on(void)
  * next read or write operation to FLASH or EEPROM. Must always be used prior to
  * Cmnd_STK_PROG_PAGE or Cmnd_STK_READ_PAGE.
  */
-void load_address(void)
+static void load_address(void)
 {
 	struct request
 	{
@@ -191,7 +159,7 @@ void load_address(void)
  * together with a Resp_STK_FAILED response to indicate the error.
  * See the parameters section for valid parameters and their meaning.
  */
-void get_parameter(void)
+static void get_parameter(void)
 {
 	struct request
 	{
@@ -200,41 +168,31 @@ void get_parameter(void)
 		uint8_t eop;
 	} *prequest;
 
-	struct response
-	{
-		uint8_t insync;
-		uint8_t value;
-		uint8_t status;
-	} *presponse;
-
 	prequest = (struct request*) uart_buf;
-	presponse = (struct response*) uart_buf;
-
-	/* Assume we are successful, replaced otherwise */
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
 
 	switch (prequest->parameter)
 	{
 	case Parm_STK_HW_VER:
-		presponse->value = HW_VER;
+		quick_byte_response(HW_VER);
 		break;
 
 	case Parm_STK_SW_MAJOR:
-		presponse->value = SW_MAJOR;
+		quick_byte_response(SW_MAJOR);
 		break;
 
 	case Parm_STK_SW_MINOR:
-		presponse->value = SW_MINOR;
+		quick_byte_response(SW_MINOR);
 		break;
 
-	/* Other parameters not supported yet */
+	/*
+	 * Other parameters not supported yet.
+	 * Deviation from protocol...
+	 * We send 0x00, took from ATmegaBOOT.c
+	 */
 	default:
-		presponse->status = Resp_STK_FAILED;
+		quick_byte_response(0);
 		break;
 	}
-
-	uart_send(presponse, sizeof(*presponse));
 }
 
 
@@ -242,7 +200,7 @@ void get_parameter(void)
  * Download a block of data to the starterkit and program it in FLASH or EEPROM of the
  * current device. The data block size should not be larger than 256 bytes.
  */
-void program_page(void)
+static void program_page(void)
 {
 	struct request
 	{
@@ -276,7 +234,7 @@ void program_page(void)
 /*
  * Read signature bytes.
  */
-void read_signature_bytes(void)
+static void read_signature_bytes(void)
 {
 	struct response
 	{
@@ -297,30 +255,6 @@ void read_signature_bytes(void)
 
 	presponse->insync = Resp_STK_INSYNC;
 	presponse->status = Resp_STK_OK;
-
-	uart_send(presponse, sizeof(*presponse));
-}
-
-
-/*
- * Read Oscillator calibration byte.
- */
-void read_osc_cal(void)
-{
-	struct response
-	{
-		uint8_t insync;
-		uint8_t osc_cal_byte;
-		uint8_t status;
-	} *presponse;
-
-	presponse = (struct response*) uart_buf;
-
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
-
-	/* TODO:: not sure if this should be the answer */
-	presponse->osc_cal_byte = boot_signature_byte_get(0x0001);
 
 	uart_send(presponse, sizeof(*presponse));
 }
@@ -347,11 +281,6 @@ int main(void)
 			get_sign_on();
 			break;
 
-		/* Get Synchronization */
-		case Cmnd_STK_GET_SYNC:
-			get_sync();
-			break;
-
 		/* Load Address */
 		case Cmnd_STK_LOAD_ADDRESS:
 			load_address();
@@ -372,13 +301,15 @@ int main(void)
 			read_signature_bytes();
 			break;
 
-		/* Read Oscillator Calibration Byte */
-		case Cmnd_STK_READ_OSCCAL:
-			read_osc_cal();
+		/* Get Synchronization */
+		case Cmnd_STK_GET_SYNC:
+		/* Autoincrement Addresses ? */
+		case Cmnd_STK_CHECK_AUTOINC:
+			quick_ok_response();
 			break;
 
 		default:
-			quick_ok_response();
+			quick_fail_response();
 			break;
 		}
 	}
