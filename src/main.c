@@ -9,6 +9,8 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include <avr/io.h>
+#include <avr/signature.h>
 #include <avr/boot.h>
 
 #include "command.h"
@@ -19,41 +21,64 @@
 #define SW_MINOR	0x01
 
 
+#ifndef SIGRD
+#define SIGRD 5
+#warning "!!!!!!!! MCU does not have SIGRD. Using dummy 5 !!!!!!!!"
+#endif
+
 uint8_t uart_buf[280];
 void (*app_start)(void) = 0x0000;
-
-typedef enum
-{
-	MEMTYPE_NONE = 0,
-	MEMTYPE_FLASH,
-	MEMTYPE_EEPROM,
-	MEMTYPE_FUSE,
-} MEMTYPES_E;
 
 
 struct __attribute__ ((packed))
 {
-	MEMTYPES_E memtype;
-
 	uint16_t address;	/* bytes for EEPROM ; words for FLASH */
-	uint8_t *data;
-	uint16_t size;
+	char loaded;
 } programming_attributes;
 
 
 
 void uart_send(void *pvdata, uint16_t uslen)
 {
-	uint8_t *test = (uint8_t*) pvdata;
-	test += uslen - 1;
-	*test = 34;
+
 }
 
-void program_memory(void)
+
+void boot_program_page (uint32_t page, uint8_t *buf)
+{
+    uint16_t i, w;
+
+    eeprom_busy_wait ();
+    boot_page_erase (page);
+    boot_spm_busy_wait ();      // Wait until the memory is erased.
+    for (i=0; i<SPM_PAGESIZE; i+=2)
+    {
+        // Set up little-endian word.
+        w = *buf++;
+        w += (*buf++) << 8;
+
+        boot_page_fill (page + i, w);
+    }
+    boot_page_write (page);     // Store buffer in flash page.
+    boot_spm_busy_wait();       // Wait until the memory is written.
+    // Reenable RWW-section again. We need this if we want to jump back
+    // to the application after bootloading.
+    boot_rww_enable ();
+}
+
+
+void program_flash(void *pvdata, uint16_t uslen)
 {
 
 }
 
+
+void program_eeprom(void *pvdata, uint16_t uslen)
+{
+
+}
+
+#if 0 /* not yet needed */
 void quick_fail_response(void)
 {
 	struct __attribute__ ((packed)) response
@@ -69,7 +94,7 @@ void quick_fail_response(void)
 
 	uart_send(presponse, sizeof(*presponse));
 }
-
+#endif
 
 void quick_ok_response(void)
 {
@@ -151,6 +176,8 @@ void load_address(void)
 	} *prequest;
 
 	prequest = (struct request*) uart_buf;
+
+	programming_attributes.loaded = 1;
 
 	/* TODO:: check for right endian ordering!! */
 	programming_attributes.address = prequest->u16.address;
@@ -236,21 +263,68 @@ void program_page(void)
 	/* Memory to program */
 	if (prequest->memtype == 'F')
 	{
-		programming_attributes.memtype = MEMTYPE_FLASH;
+		program_flash(prequest->data, prequest->u16.size);
 	}
 	else if (prequest->memtype == 'E')
 	{
-		programming_attributes.memtype = MEMTYPE_EEPROM;
+		program_eeprom(prequest->data, prequest->u16.size);
 	}
-
-	programming_attributes.data = prequest->data;
-	/* TODO:: endian of size */
-	programming_attributes.size = prequest->u16.size;
-
-	program_memory();
 
 	quick_ok_response();
 }
+
+/*
+ * Read signature bytes.
+ */
+void read_signature_bytes(void)
+{
+	struct __attribute__ ((packed)) response
+	{
+		uint8_t insync;
+		uint8_t sign_high;
+		uint8_t sign_middle;
+		uint8_t sign_low;
+		uint8_t status;
+	} *presponse;
+
+	presponse = (struct response*) uart_buf;
+
+	/* TODO:: check endian ordering */
+	/* FIXME:: not all atmegas have SIGRD */
+	presponse->sign_high	= boot_signature_byte_get(0x0004);
+	presponse->sign_middle	= boot_signature_byte_get(0x0002);
+	presponse->sign_low		= boot_signature_byte_get(0x0000);
+
+	presponse->insync = Resp_STK_INSYNC;
+	presponse->status = Resp_STK_OK;
+
+	uart_send(presponse, sizeof(*presponse));
+}
+
+
+/*
+ * Read Oscillator calibration byte.
+ */
+void read_osc_cal(void)
+{
+	struct __attribute__ ((packed)) response
+	{
+		uint8_t insync;
+		uint8_t osc_cal_byte;
+		uint8_t status;
+	} *presponse;
+
+	presponse = (struct response*) uart_buf;
+
+	presponse->insync = Resp_STK_INSYNC;
+	presponse->status = Resp_STK_OK;
+
+	/* TODO:: not sure if this shoulld be the answer */
+	presponse->osc_cal_byte = boot_signature_byte_get(0x0001);
+
+	uart_send(presponse, sizeof(*presponse));
+}
+
 
 int main(void)
 {
@@ -290,8 +364,19 @@ int main(void)
 		program_page();
 		break;
 
+	/* Read Device Signature */
+	case Cmnd_STK_READ_SIGN:
+		read_signature_bytes();
+		break;
+
+	/* Read Oscillator Calibration Byte */
+	case Cmnd_STK_READ_OSCCAL:
+		read_osc_cal();
+		break;
+
 	default:
 		quick_ok_response();
+		break;
 	}
 
 	return 0;
