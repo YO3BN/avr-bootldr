@@ -35,7 +35,7 @@ void program_flash_page(uint32_t page, uint8_t *buf, uint16_t uslen)
 
 void program_flash(void *pvdata, uint16_t uslen)
 {
-
+	program_flash_page(0, pvdata, uslen);
 }
 
 

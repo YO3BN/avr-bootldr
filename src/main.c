@@ -8,7 +8,7 @@
 
 
 #include <inttypes.h>
-#include <string.h>
+
 #include <avr/io.h>
 #include <avr/signature.h>
 #include <avr/boot.h>
@@ -20,14 +20,14 @@
 #define SW_MAJOR	0x00
 #define SW_MINOR	0x01
 
-
+/* FIXME:: using dummy 5, but for some MCU this is reserved and should not be used */
 #ifndef SIGRD
 #define SIGRD 5
 #warning "!!!!!!!! MCU does not have SIGRD. Using dummy 5 !!!!!!!!"
 #endif
 
 void (*app_start)(void) = 0x0000;
-static volatile uint8_t uart_buf[280];
+static volatile uint8_t uart_buf[265];
 volatile uint16_t prog_address;	/* bytes for EEPROM ; words pages for FLASH */
 
 
@@ -186,7 +186,7 @@ static void get_parameter(void)
 
 	/*
 	 * Other parameters not supported yet.
-	 * Deviation from protocol...
+	 * Deviation from standard protocol...
 	 * We send 0x00, took from ATmegaBOOT.c
 	 */
 	default:
@@ -212,7 +212,7 @@ static void program_page(void)
 			uint16_t size;
 		} u16;
 		uint8_t memtype;
-		uint8_t data[257];	/* Including EOP byte */
+		uint8_t data[257];	/* 256 + EOP byte */
 	} *prequest;
 
 
@@ -221,10 +221,12 @@ static void program_page(void)
 	/* Memory to program */
 	if (prequest->memtype == 'F')
 	{
+		/* FIXME:: enddianness!!! */
 		program_flash(prequest->data, prequest->u16.size);
 	}
 	else if (prequest->memtype == 'E')
 	{
+		/* FIXME:: enddianness!!! */
 		program_eeprom(prequest->data, prequest->u16.size);
 	}
 
