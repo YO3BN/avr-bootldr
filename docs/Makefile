@@ -70,6 +70,8 @@ lilypad: TARGET = lilypad
 lilypad: CFLAGS += '-DMAX_TIME_COUNT=F_CPU>>1' '-DNUM_LED_FLASHES=3'
 lilypad: AVR_FREQ = 8000000L
 lilypad: $(PROGRAM)_lilypad.hex
+lilypad: $(PROGRAM)_lilypad.bin
+lilypad: $(PROGRAM)_lilypad.elf
 
 lilypad_isp: lilypad
 lilypad_isp: TARGET = lilypad
