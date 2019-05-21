@@ -34,6 +34,9 @@ static volatile uint8_t uart_buf[265];
 volatile uint16_t prog_address;	/* bytes for EEPROM ; words for FLASH */
 
 
+void program_flash_page(uint8_t *buf, uint16_t uslen);
+void program_eeprom_page(const void *pvdata, uint16_t uslen);
+
 
 void uart_send(void *pvdata, uint16_t uslen)
 {
@@ -48,7 +51,9 @@ void uart_init(void)
 
 void uart_recv(void)
 {
-
+/* TODO:: timeout
+ * TODO:: recv stop if count >= sizeof buf
+ */
 }
 
 static void quick_fail_response(void)
@@ -228,10 +233,8 @@ static void program_page(void)
 				uint8_t high;
 				uint8_t low;
 			} bytes;
-
 			uint16_t size;
 		} u16;
-
 		uint8_t memtype;
 		uint8_t data[257];	/* 256 + EOP byte */
 	} *prequest;
@@ -243,11 +246,19 @@ static void program_page(void)
 	/* Memory to program */
 	if (prequest->memtype == 'F')
 	{
+		/* Check page boundary. */
+		if (((prog_address * 2) % SPM_PAGESIZE) &&
+				(prequest->u16.size > SPM_PAGESIZE))
+		{
+			quick_fail_response();
+			return;
+		}
 		/* FIXME:: enddianness!!! */
 		program_flash_page(prequest->data, prequest->u16.size);
 	}
 	else if (prequest->memtype == 'E')
 	{
+		/* TODO:: check page boundary */
 		/* FIXME:: enddianness!!! */
 		program_eeprom_page(prequest->data, prequest->u16.size);
 	}
@@ -327,8 +338,6 @@ int main(void)
 
 		/* Get Synchronization */
 		case Cmnd_STK_GET_SYNC:
-		/* Autoincrement Addresses ? */
-		case Cmnd_STK_CHECK_AUTOINC:
 			quick_ok_response();
 			break;
 
