@@ -1,16 +1,21 @@
 #include <stdint.h>
 #include <avr/boot.h>
+#include <avr/pgmspace.h>
 
-extern volatile uint16_t prog_address;
-
-void program_flash_page(uint8_t *buf, uint16_t uslen)
+extern volatile struct
 {
-	//TODO:: even up the uslen
+	char enabled;
+	uint16_t address;	/* bytes for EEPROM ; words for FLASH */
+} programming;
+
+void write_flash_page(uint8_t *buf, uint16_t uslen)
+{
+	//TODO:: even up the uslen?
 	//TODO:: make this function work
 	uint16_t i, flash_word;
 
 	eeprom_busy_wait();
-	boot_page_erase(prog_address);
+	boot_page_erase(programming.address);
 
 	/* Wait until the memory is erased */
 	boot_spm_busy_wait();
@@ -21,10 +26,10 @@ void program_flash_page(uint8_t *buf, uint16_t uslen)
 		flash_word = *buf++;
 		flash_word += (*buf++) << 8;
 		/* Fill the hardware buffer */
-		boot_page_fill(prog_address + i, flash_word);
+		boot_page_fill(programming.address + i, flash_word);
 	}
 	/* Store buffer in flash page */
-	boot_page_write(prog_address);
+	boot_page_write(programming.address);
 	/* Wait until the memory is written */
 	boot_spm_busy_wait();
 	/*
@@ -35,7 +40,15 @@ void program_flash_page(uint8_t *buf, uint16_t uslen)
 	boot_rww_enable();
 }
 
-void program_eeprom_page(const void *pvdata, uint16_t uslen)
+
+void read_flash_page(void *pvdata)
 {
-	eeprom_write_block(pvdata, (void*) &prog_address, uslen);
+//pgm_read_word_near
+//pgm_read_word_far
+}
+
+
+void write_eeprom_page(const void *pvdata, uint16_t uslen)
+{
+	eeprom_write_block(pvdata, (void*) &programming.address, uslen);
 }

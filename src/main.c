@@ -9,33 +9,33 @@
 
 
 #include <stdint.h>
+#include <string.h>
 #include <avr/io.h>
-#include <avr/signature.h>
 #include <avr/boot.h>
+#include <avr/interrupt.h>
 
 #include "command.h"
 
 
 #define HW_VER		0x01
-#define SW_MAJOR	0x00
-#define SW_MINOR	0x01
+#define SW_MAJOR	0x02
+#define SW_MINOR	0x03
 
 #define SWAP_US(a)	((((a) & 0xff00) >> 8) | (((a) & 0x00ff) << 8))
 
 
-/* FIXME:: using dummy 5, but for some MCU this is reserved and should not be used */
-#ifndef SIGRD
-#define SIGRD 5
-#warning "!!!!!!!! MCU does not have SIGRD. Using dummy 5 !!!!!!!!"
-#endif
 
 void (*app_start)(void) = 0x0000;
-static volatile uint8_t uart_buf[265];
-volatile uint16_t prog_address;	/* bytes for EEPROM ; words for FLASH */
+static volatile uint8_t uart_buf[256 + 16];
+volatile struct
+{
+	char mode;
+	uint16_t address;	/* bytes for EEPROM ; words for FLASH */
+} programming;
 
 
-void program_flash_page(uint8_t *buf, uint16_t uslen);
-void program_eeprom_page(const void *pvdata, uint16_t uslen);
+void write_flash_page(uint8_t *buf, uint16_t uslen);
+void write_eeprom_page(const void *pvdata, uint16_t uslen);
 
 
 void uart_send(void *pvdata, uint16_t uslen)
@@ -62,14 +62,14 @@ static void quick_fail_response(void)
 	{
 		uint8_t insync;
 		uint8_t status;
-	} *presponse;
+	} *response_ptr;
 
-	presponse = (struct response*) uart_buf;
+	response_ptr = (struct response*) uart_buf;
 
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_FAILED;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->status = Resp_STK_FAILED;
 
-	uart_send(presponse, sizeof(*presponse));
+	uart_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -79,14 +79,14 @@ static void quick_ok_response(void)
 	{
 		uint8_t insync;
 		uint8_t status;
-	} *presponse;
+	} *response_ptr;
 
-	presponse = (struct response*) uart_buf;
+	response_ptr = (struct response*) uart_buf;
 
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->status = Resp_STK_OK;
 
-	uart_send(presponse, sizeof(*presponse));
+	uart_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -97,15 +97,15 @@ static void quick_byte_response(uint8_t byte)
 		uint8_t insync;
 		uint8_t byte;
 		uint8_t status;
-	} *presponse;
+	} *response_ptr;
 
-	presponse = (struct response*) uart_buf;
+	response_ptr = (struct response*) uart_buf;
 
-	presponse->byte = byte;
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
+	response_ptr->byte = byte;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->status = Resp_STK_OK;
 
-	uart_send(presponse, sizeof(*presponse));
+	uart_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -120,26 +120,26 @@ static void get_sign_on(void)
 		uint8_t insync;
 		char sign_on_message[7];
 		uint8_t status;
-	} *presponse;
+	} *response_ptr;
 
-	presponse = (struct response*) uart_buf;
+	response_ptr = (struct response*) uart_buf;
 
 	/*
 	 * The following sequence makes .txt and .data segments smaller than using:
-	 * strcpy(presponse->sign_on_message, STK_SIGN_ON_MESSAGE);
+	 * strcpy(response_ptr->sign_on_message, STK_SIGN_ON_MESSAGE);
 	 */
-	presponse->sign_on_message[0] = 'A';
-	presponse->sign_on_message[1] = 'V';
-	presponse->sign_on_message[2] = 'R';
-	presponse->sign_on_message[3] = ' ';
-	presponse->sign_on_message[4] = 'S';
-	presponse->sign_on_message[5] = 'T';
-	presponse->sign_on_message[6] = 'K';
+	response_ptr->sign_on_message[0] = 'A';
+	response_ptr->sign_on_message[1] = 'V';
+	response_ptr->sign_on_message[2] = 'R';
+	response_ptr->sign_on_message[3] = ' ';
+	response_ptr->sign_on_message[4] = 'S';
+	response_ptr->sign_on_message[5] = 'T';
+	response_ptr->sign_on_message[6] = 'K';
 
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->status = Resp_STK_OK;
 
-	uart_send(presponse, sizeof(*presponse));
+	uart_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -157,18 +157,18 @@ static void load_address(void)
 		{
 			struct
 			{
-				uint8_t addr_low;
-				uint8_t addr_high;
-			}byte;
+				uint8_t low;
+				uint8_t high;
+			}addr;
 			uint16_t address;
 		} u16;
 		uint8_t eop;
-	} *prequest;
+	} *request_ptr;
 
-	prequest = (struct request*) uart_buf;
+	request_ptr = (struct request*) uart_buf;
 
 	/* TODO:: check for right endian ordering!! */
-	prog_address = prequest->u16.address;
+	programming.address = request_ptr->u16.address;
 
 	quick_ok_response();
 }
@@ -182,38 +182,40 @@ static void load_address(void)
  */
 static void get_parameter(void)
 {
+	uint8_t byte;
 	struct request
 	{
 		uint8_t cmd;
 		uint8_t parameter;
 		uint8_t eop;
-	} *prequest;
+	} *request_ptr;
 
-	prequest = (struct request*) uart_buf;
+	request_ptr = (struct request*) uart_buf;
 
-	switch (prequest->parameter)
+	switch (request_ptr->parameter)
 	{
 	case Parm_STK_HW_VER:
-		quick_byte_response(HW_VER);
+		byte = HW_VER;
 		break;
 
 	case Parm_STK_SW_MAJOR:
-		quick_byte_response(SW_MAJOR);
+		byte = SW_MAJOR;
 		break;
 
 	case Parm_STK_SW_MINOR:
-		quick_byte_response(SW_MINOR);
+		byte = SW_MINOR;
 		break;
 
 	/*
-	 * Other parameters not supported yet.
 	 * Deviation from standard protocol...
 	 * We send 0x00, took from ATmegaBOOT.c
 	 */
 	default:
-		quick_byte_response(0);
+		byte = 0;
 		break;
 	}
+
+	quick_byte_response(byte);
 }
 
 
@@ -237,34 +239,53 @@ static void program_page(void)
 		} u16;
 		uint8_t memtype;
 		uint8_t data[257];	/* 256 + EOP byte */
-	} *prequest;
+	} *request_ptr;
 
-	prequest = (struct request*) uart_buf;
+	request_ptr = (struct request*) uart_buf;
+
+	if (!programming.mode)
+	{
+		goto fail;
+	}
+
 	/* Inplace endianness fix. */
-	prequest->u16.size = SWAP_US(prequest->u16.size);
+	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
 
 	/* Memory to program */
-	if (prequest->memtype == 'F')
+	if (request_ptr->memtype == 'F')
 	{
 		/* Check page boundary. */
-		if (((prog_address * 2) % SPM_PAGESIZE) &&
-				(prequest->u16.size > SPM_PAGESIZE))
+		if (((programming.address * 2) % SPM_PAGESIZE) != 0 ||
+				(request_ptr->u16.size != SPM_PAGESIZE))
 		{
-			quick_fail_response();
-			return;
+			goto fail;
 		}
-		/* FIXME:: enddianness!!! */
-		program_flash_page(prequest->data, prequest->u16.size);
+		/* FIXME:: endianness!!! */
+		write_flash_page(request_ptr->data, request_ptr->u16.size);
 	}
-	else if (prequest->memtype == 'E')
+	else if (request_ptr->memtype == 'E')
 	{
-		/* TODO:: check page boundary */
-		/* FIXME:: enddianness!!! */
-		program_eeprom_page(prequest->data, prequest->u16.size);
+		/* TODO:: Check page boundary. */
+		if (0)
+		{
+			goto fail;
+		}
+		/* FIXME:: endianness!!! */
+		write_eeprom_page(request_ptr->data, request_ptr->u16.size);
 	}
 
 	quick_ok_response();
+	return;
+
+fail:
+	quick_fail_response();
 }
+
+void read_page(void)
+{
+
+}
+
 
 /*
  * Read signature bytes.
@@ -275,28 +296,31 @@ static void read_signature_bytes(void)
 	{
 		uint8_t insync;
 		uint8_t sign_high;
-		uint8_t sign_middle;
+		uint8_t sign_mid;
 		uint8_t sign_low;
 		uint8_t status;
-	} *presponse;
+	} *response_ptr;
 
-	presponse = (struct response*) uart_buf;
+	response_ptr = (struct response*) uart_buf;
 
 	/* TODO:: check endian ordering */
-	/* FIXME:: not all atmegas have SIGRD */
-	presponse->sign_high	= boot_signature_byte_get(0x0004);
-	presponse->sign_middle	= boot_signature_byte_get(0x0002);
-	presponse->sign_low		= boot_signature_byte_get(0x0000);
+	response_ptr->sign_high	= SIGNATURE_0;
+	response_ptr->sign_mid	= SIGNATURE_1;
+	response_ptr->sign_low	= SIGNATURE_2;
 
-	presponse->insync = Resp_STK_INSYNC;
-	presponse->status = Resp_STK_OK;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->status = Resp_STK_OK;
 
-	uart_send(presponse, sizeof(*presponse));
+	uart_send(response_ptr, sizeof(*response_ptr));
 }
 
 
 int main(void)
 {
+	cli();
+	memset((void*) &programming, 0, sizeof programming);
+
+
 //	if (!uart_connected())
 //	{
 //		start_app();
@@ -331,6 +355,11 @@ int main(void)
 			program_page();
 			break;
 
+		/* Read Page */
+		case Cmnd_STK_READ_PAGE:
+			read_page();
+			break;
+
 		/* Read Device Signature */
 		case Cmnd_STK_READ_SIGN:
 			read_signature_bytes();
@@ -338,6 +367,20 @@ int main(void)
 
 		/* Get Synchronization */
 		case Cmnd_STK_GET_SYNC:
+		/* Set Device Parameters */
+		case Cmnd_STK_SET_DEVICE:
+			quick_ok_response();
+			break;
+
+		/* Enter Programming Mode */
+		case Cmnd_STK_ENTER_PROGMODE:
+			programming.mode = 1;
+			quick_ok_response();
+			break;
+
+		/* Leave Programming Mode */
+		case Cmnd_STK_LEAVE_PROGMODE:
+			programming.mode = 0;
 			quick_ok_response();
 			break;
 
