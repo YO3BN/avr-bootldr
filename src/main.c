@@ -37,6 +37,8 @@ volatile struct
 void write_flash_page(uint8_t *buf, uint16_t uslen);
 void write_eeprom_page(const void *pvdata, uint16_t uslen);
 
+void read_flash_page(void *pvdata, uint16_t uslen);
+
 
 void uart_send(void *pvdata, uint16_t uslen)
 {
@@ -281,9 +283,56 @@ fail:
 	quick_fail_response();
 }
 
-void read_page(void)
+static void read_page(void)
 {
+	struct request
+	{
+		uint8_t cmd;
+		union
+		{
+			struct
+			{
+				uint8_t high;
+				uint8_t low;
+			}bytes;
+			uint16_t size;
+		}u16;
+		uint8_t memtype;
+		uint8_t data[257];	/* 256 + EOP byte */
+	} *request_ptr;
 
+	struct response
+	{
+		uint8_t insync;
+		uint8_t data[257];	/* 256 + EOP byte */
+	} *response_ptr;
+
+	request_ptr = (struct request*) uart_buf;
+
+	/* Inplace endianness fix. */
+	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
+
+	// TODO:: size check!!
+
+	/* Memory to program */
+	if (request_ptr->memtype == 'F')
+	{
+		read_flash_page(request_ptr->data, request_ptr->u16.size);
+	}
+	else if (request_ptr->memtype == 'E')
+	{
+		//read_eeprom_page(request_ptr->data, request_ptr->u16.size);
+	}
+
+	/*
+	 * The data is stored into buffer already, therefore we only have
+	 * shift the response pointer one byte ahead of data[] just to add the SYNC byte.
+	 */
+	response_ptr = (struct response*) &request_ptr->memtype;
+	response_ptr->insync = Resp_STK_INSYNC;
+	response_ptr->data[request_ptr->u16.size] = Sync_CRC_EOP;
+
+	uart_send(response_ptr, request_ptr->u16.size);
 }
 
 
@@ -318,7 +367,7 @@ static void read_signature_bytes(void)
 int main(void)
 {
 	cli();
-	memset((void*) &programming, 0, sizeof programming);
+//	memset((void*) &programming, 0, sizeof programming); //<- redundant memset; already done by __clear_bss
 
 
 //	if (!uart_connected())

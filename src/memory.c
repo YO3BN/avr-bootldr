@@ -11,7 +11,6 @@ extern volatile struct
 void write_flash_page(uint8_t *buf, uint16_t uslen)
 {
 	//TODO:: even up the uslen?
-	//TODO:: make this function work
 	uint16_t i, flash_word;
 
 	eeprom_busy_wait();
@@ -41,10 +40,25 @@ void write_flash_page(uint8_t *buf, uint16_t uslen)
 }
 
 
-void read_flash_page(void *pvdata)
+void read_flash_page(void *pvdata, uint16_t uslen)
 {
 //pgm_read_word_near
 //pgm_read_word_far
+
+	uint8_t *p = pvdata;
+	//TODO move into load_address()??
+	programming.address *= 2;
+
+	while (uslen)
+	{
+#if defined (RAMPZ)
+		*p = pgm_read_byte_far(programming.address + 0x10000);
+#else
+		*p = pgm_read_byte(programming.address);
+#endif
+		p++;
+		uslen--;
+	}
 }
 
 
