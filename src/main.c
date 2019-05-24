@@ -26,7 +26,7 @@
 
 
 void (*app_start)(void) = 0x0000;
-static volatile uint8_t uart_buf[256 + 16];
+volatile uint8_t io_buf[256 + 16];
 volatile struct
 {
 	char mode;
@@ -38,25 +38,14 @@ void write_flash_page(uint8_t *buf, uint16_t uslen);
 void write_eeprom_page(const void *pvdata, uint16_t uslen);
 
 void read_flash_page(void *pvdata, uint16_t uslen);
+void read_eeprom_page(void *pvdata, uint16_t uslen);
 
 
-void uart_send(void *pvdata, uint16_t uslen)
-{
-
-}
-
-void uart_init(void)
-{
-
-}
+void io_send(void *pvdata, uint16_t uslen);
+uint16_t io_recv(void);
+void io_init(void);
 
 
-void uart_recv(void)
-{
-/* TODO:: timeout
- * TODO:: recv stop if count >= sizeof buf
- */
-}
 
 static void quick_fail_response(void)
 {
@@ -66,12 +55,12 @@ static void quick_fail_response(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) uart_buf;
+	response_ptr = (struct response*) io_buf;
 
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_FAILED;
 
-	uart_send(response_ptr, sizeof(*response_ptr));
+	io_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -83,12 +72,12 @@ static void quick_ok_response(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) uart_buf;
+	response_ptr = (struct response*) io_buf;
 
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	uart_send(response_ptr, sizeof(*response_ptr));
+	io_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -101,13 +90,13 @@ static void quick_byte_response(uint8_t byte)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) uart_buf;
+	response_ptr = (struct response*) io_buf;
 
 	response_ptr->byte = byte;
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	uart_send(response_ptr, sizeof(*response_ptr));
+	io_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -124,7 +113,7 @@ static void get_sign_on(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) uart_buf;
+	response_ptr = (struct response*) io_buf;
 
 	/*
 	 * The following sequence makes .txt and .data segments smaller than using:
@@ -141,7 +130,7 @@ static void get_sign_on(void)
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	uart_send(response_ptr, sizeof(*response_ptr));
+	io_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -167,7 +156,7 @@ static void load_address(void)
 		uint8_t eop;
 	} *request_ptr;
 
-	request_ptr = (struct request*) uart_buf;
+	request_ptr = (struct request*) io_buf;
 
 	/* TODO:: check for right endian ordering!! */
 	programming.address = request_ptr->u16.address;
@@ -192,7 +181,7 @@ static void get_parameter(void)
 		uint8_t eop;
 	} *request_ptr;
 
-	request_ptr = (struct request*) uart_buf;
+	request_ptr = (struct request*) io_buf;
 
 	switch (request_ptr->parameter)
 	{
@@ -243,7 +232,7 @@ static void program_page(void)
 		uint8_t data[257];	/* 256 + EOP byte */
 	} *request_ptr;
 
-	request_ptr = (struct request*) uart_buf;
+	request_ptr = (struct request*) io_buf;
 
 	if (!programming.mode)
 	{
@@ -307,7 +296,7 @@ static void read_page(void)
 		uint8_t data[257];	/* 256 + EOP byte */
 	} *response_ptr;
 
-	request_ptr = (struct request*) uart_buf;
+	request_ptr = (struct request*) io_buf;
 
 	/* Inplace endianness fix. */
 	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
@@ -321,18 +310,18 @@ static void read_page(void)
 	}
 	else if (request_ptr->memtype == 'E')
 	{
-		//read_eeprom_page(request_ptr->data, request_ptr->u16.size);
+		read_eeprom_page(request_ptr->data, request_ptr->u16.size);
 	}
 
 	/*
-	 * The data is stored into buffer already, therefore we only have
-	 * shift the response pointer one byte ahead of data[] just to add the SYNC byte.
+	 * The data is stored into buffer already, therefore we only have shift the
+	 * response pointer one byte ahead of data[] just to add the SYNC byte in packet.
 	 */
 	response_ptr = (struct response*) &request_ptr->memtype;
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->data[request_ptr->u16.size] = Sync_CRC_EOP;
 
-	uart_send(response_ptr, request_ptr->u16.size);
+	io_send(response_ptr, request_ptr->u16.size);
 }
 
 
@@ -350,7 +339,7 @@ static void read_signature_bytes(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) uart_buf;
+	response_ptr = (struct response*) io_buf;
 
 	/* TODO:: check endian ordering */
 	response_ptr->sign_high	= SIGNATURE_0;
@@ -360,28 +349,36 @@ static void read_signature_bytes(void)
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	uart_send(response_ptr, sizeof(*response_ptr));
+	io_send(response_ptr, sizeof(*response_ptr));
 }
 
 
 int main(void)
 {
+	/*
+	 * Since we are not using interrupts,
+	 * we shall disable them.
+	 */
 	cli();
+
 //	memset((void*) &programming, 0, sizeof programming); //<- redundant memset; already done by __clear_bss
 
 
-//	if (!uart_connected())
+//	if (!io_connected())
 //	{
 //		start_app();
 //	}
 //
-//	uart_init();
+	io_init();
 
 	for (;;)
 	{
-		//	uart_recv();
+		if (io_recv() < 2)
+		{
+			continue;
+		}
 
-		switch (uart_buf[0])
+		switch (io_buf[0])
 		{
 
 		/* Check if Starterkit Present */

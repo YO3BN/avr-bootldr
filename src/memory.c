@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <avr/boot.h>
 #include <avr/pgmspace.h>
+#include <avr/eeprom.h>
 
 extern volatile struct
 {
@@ -42,9 +43,6 @@ void write_flash_page(uint8_t *buf, uint16_t uslen)
 
 void read_flash_page(void *pvdata, uint16_t uslen)
 {
-//pgm_read_word_near
-//pgm_read_word_far
-
 	uint8_t *p = pvdata;
 	//TODO move into load_address()??
 	programming.address *= 2;
@@ -65,4 +63,12 @@ void read_flash_page(void *pvdata, uint16_t uslen)
 void write_eeprom_page(const void *pvdata, uint16_t uslen)
 {
 	eeprom_write_block(pvdata, (void*) &programming.address, uslen);
+}
+
+
+void read_eeprom_page(void *pvdata, uint16_t uslen)
+{
+	//TODO move into load_address()??
+	programming.address *= 2;
+	eeprom_read_block(pvdata, (void*) programming.address, uslen);
 }
