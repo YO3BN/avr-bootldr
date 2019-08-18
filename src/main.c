@@ -239,19 +239,19 @@ static void program_page(void)
 		goto fail;
 	}
 
-	/* Inplace endianness fix. */
+	/* Inplace endian fix. */
 	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
 
 	/* Memory to program */
 	if (request_ptr->memtype == 'F')
 	{
-		/* Check page boundary. */
-		if (((programming.address * 2) % SPM_PAGESIZE) != 0 ||
-				(request_ptr->u16.size != SPM_PAGESIZE))
-		{
-			goto fail;
-		}
-		/* FIXME:: endianness!!! */
+		// FIXME always goes to fail
+//		/* Check page boundary. */
+//		if (((programming.address * 2) % SPM_PAGESIZE) != 0 ||
+//				(request_ptr->u16.size != SPM_PAGESIZE))
+//		{
+//			goto fail;
+//		}
 		write_flash_page(request_ptr->data, request_ptr->u16.size);
 	}
 	else if (request_ptr->memtype == 'E')
@@ -261,7 +261,6 @@ static void program_page(void)
 		{
 			goto fail;
 		}
-		/* FIXME:: endianness!!! */
 		write_eeprom_page(request_ptr->data, request_ptr->u16.size);
 	}
 
@@ -298,7 +297,7 @@ static void read_page(void)
 
 	request_ptr = (struct request*) io_buf;
 
-	/* Inplace endianness fix. */
+	/* Inplace endian fix. */
 	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
 
 	// TODO:: size check!!
@@ -319,9 +318,10 @@ static void read_page(void)
 	 */
 	response_ptr = (struct response*) &request_ptr->memtype;
 	response_ptr->insync = Resp_STK_INSYNC;
-	response_ptr->data[request_ptr->u16.size] = Sync_CRC_EOP;
+	response_ptr->data[request_ptr->u16.size] = Resp_STK_OK;
 
-	io_send(response_ptr, request_ptr->u16.size);
+	/* +2 since we have the Resp_STK_INSYNC and Resp_STK_OK bytes */
+	io_send(response_ptr, request_ptr->u16.size + 2);
 }
 
 
@@ -353,6 +353,49 @@ static void read_signature_bytes(void)
 }
 
 
+static void quick_universal_hack(void)
+{
+	if (io_buf[1] == 0x30)
+	{
+		switch (io_buf[3])
+		{
+		case 0:
+			quick_byte_response(SIGNATURE_0);
+			break;
+			
+		case 1:
+			quick_byte_response(SIGNATURE_1);
+			break;
+			
+		case 2:
+			quick_byte_response(SIGNATURE_2);
+			break;
+		
+		default:
+			quick_fail_response();
+			break;
+		}
+		return;
+	}
+	
+	quick_byte_response(0x00);
+}
+
+uint8_t io_connected(void)
+{
+	char c = '?';
+	io_send( &c, 1);
+	//TODO set timer here!
+	io_recv();
+	if (io_buf[0] == ' ')
+	{
+		return 1;
+	}
+	
+	return 0;
+}
+
+
 int main(void)
 {
 	/*
@@ -363,13 +406,17 @@ int main(void)
 
 //	memset((void*) &programming, 0, sizeof programming); //<- redundant memset; already done by __clear_bss
 
-
-//	if (!io_connected())
-//	{
-//		start_app();
-//	}
-//
 	io_init();
+
+	char str1[] = "Bootloader\n\r";
+	char str2[] = "Starting App ...\n\r";
+	io_send(str1, strlen(str1));
+	
+	if (!io_connected())
+	{
+		io_send(str2, strlen(str2));
+		app_start();
+	}
 
 	for (;;)
 	{
@@ -411,10 +458,18 @@ int main(void)
 			read_signature_bytes();
 			break;
 
+		/* Quick Universal cmd hack*/
+		case Cmnd_STK_UNIVERSAL:
+			quick_universal_hack();
+			break;
+
 		/* Get Synchronization */
 		case Cmnd_STK_GET_SYNC:
-		/* Set Device Parameters */
+		/* Various command hacks */
 		case Cmnd_STK_SET_DEVICE:
+		case Cmnd_STK_SET_DEVICE_EXT:
+		case Cmnd_STK_CHIP_ERASE:
+		case Cmnd_STK_READ_OSCCAL:
 			quick_ok_response();
 			break;
 

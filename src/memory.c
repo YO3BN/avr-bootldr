@@ -11,16 +11,24 @@ extern volatile struct
 
 void write_flash_page(uint8_t *buf, uint16_t uslen)
 {
-	//TODO:: even up the uslen?
+	//FIXME:: even up the uslen?
+	if (uslen % 2) uslen++;
+	
 	uint16_t i, flash_word;
+
+	/*
+	 * Addresses for flash write operations is given in words
+	 * therefore we have to convert it to byte location.
+	 * One word == 2 bytes
+	 */
+	programming.address *= 2;
 
 	eeprom_busy_wait();
 	boot_page_erase(programming.address);
-
 	/* Wait until the memory is erased */
 	boot_spm_busy_wait();
 
-	for (i = 0; (i < SPM_PAGESIZE) || (i <= uslen); i += 2)
+	for (i = 0; (i < SPM_PAGESIZE) /*|| (i <= uslen)*/; i += 2)
 	{
 		/* Set up little-endian word */
 		flash_word = *buf++;
@@ -44,17 +52,27 @@ void write_flash_page(uint8_t *buf, uint16_t uslen)
 void read_flash_page(void *pvdata, uint16_t uslen)
 {
 	uint8_t *p = pvdata;
-	//TODO move into load_address()??
+
+	/*
+	 * Addresses for flash read operations is given in words
+	 * therefore we have to convert it to byte location.
+	 * One word == 2 bytes
+	 */
 	programming.address *= 2;
 
 	while (uslen)
 	{
-#if defined (RAMPZ)
-		*p = pgm_read_byte_far(programming.address + 0x10000);
-#else
-		*p = pgm_read_byte(programming.address);
-#endif
+		if (programming.address > 0xFFFF)
+		{
+			*p = pgm_read_byte_far(programming.address + 0x10000);
+		}
+		else
+		{
+			*p = pgm_read_byte(programming.address);
+		}
+		
 		p++;
+		programming.address++;
 		uslen--;
 	}
 }
