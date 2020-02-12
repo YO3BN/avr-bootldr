@@ -1,0 +1,2 @@
+export CFLAGS='-DF_CPU=1000000'
+

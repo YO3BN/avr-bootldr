@@ -26,7 +26,7 @@
 
 
 void (*app_start)(void) = 0x0000;
-volatile uint8_t io_buf[256 + 16];
+volatile uint8_t com_buf[256 + 16];
 volatile struct
 {
 	char mode;
@@ -41,10 +41,9 @@ void read_flash_page(void *pvdata, uint16_t uslen);
 void read_eeprom_page(void *pvdata, uint16_t uslen);
 
 
-void io_send(void *pvdata, uint16_t uslen);
-uint16_t io_recv(void);
-void io_init(void);
-
+void com_send(void *pvdata, uint16_t uslen);
+uint16_t com_recv(void);
+void com_init(void);
 
 
 static void quick_fail_response(void)
@@ -55,12 +54,12 @@ static void quick_fail_response(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) io_buf;
+	response_ptr = (struct response*) com_buf;
 
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_FAILED;
 
-	io_send(response_ptr, sizeof(*response_ptr));
+	com_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -72,12 +71,12 @@ static void quick_ok_response(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) io_buf;
+	response_ptr = (struct response*) com_buf;
 
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	io_send(response_ptr, sizeof(*response_ptr));
+	com_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -90,13 +89,13 @@ static void quick_byte_response(uint8_t byte)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) io_buf;
+	response_ptr = (struct response*) com_buf;
 
 	response_ptr->byte = byte;
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	io_send(response_ptr, sizeof(*response_ptr));
+	com_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -113,7 +112,7 @@ static void get_sign_on(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) io_buf;
+	response_ptr = (struct response*) com_buf;
 
 	/*
 	 * The following sequence makes .txt and .data segments smaller than using:
@@ -130,7 +129,7 @@ static void get_sign_on(void)
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	io_send(response_ptr, sizeof(*response_ptr));
+	com_send(response_ptr, sizeof(*response_ptr));
 }
 
 
@@ -156,7 +155,7 @@ static void load_address(void)
 		uint8_t eop;
 	} *request_ptr;
 
-	request_ptr = (struct request*) io_buf;
+	request_ptr = (struct request*) com_buf;
 
 	/* TODO:: check for right endian ordering!! */
 	programming.address = request_ptr->u16.address;
@@ -181,7 +180,7 @@ static void get_parameter(void)
 		uint8_t eop;
 	} *request_ptr;
 
-	request_ptr = (struct request*) io_buf;
+	request_ptr = (struct request*) com_buf;
 
 	switch (request_ptr->parameter)
 	{
@@ -232,7 +231,7 @@ static void program_page(void)
 		uint8_t data[257];	/* 256 + EOP byte */
 	} *request_ptr;
 
-	request_ptr = (struct request*) io_buf;
+	request_ptr = (struct request*) com_buf;
 
 	if (!programming.mode)
 	{
@@ -295,7 +294,7 @@ static void read_page(void)
 		uint8_t data[257];	/* 256 + EOP byte */
 	} *response_ptr;
 
-	request_ptr = (struct request*) io_buf;
+	request_ptr = (struct request*) com_buf;
 
 	/* Inplace endian fix. */
 	request_ptr->u16.size = SWAP_US(request_ptr->u16.size);
@@ -321,7 +320,7 @@ static void read_page(void)
 	response_ptr->data[request_ptr->u16.size] = Resp_STK_OK;
 
 	/* +2 since we have the Resp_STK_INSYNC and Resp_STK_OK bytes */
-	io_send(response_ptr, request_ptr->u16.size + 2);
+	com_send(response_ptr, request_ptr->u16.size + 2);
 }
 
 
@@ -339,7 +338,7 @@ static void read_signature_bytes(void)
 		uint8_t status;
 	} *response_ptr;
 
-	response_ptr = (struct response*) io_buf;
+	response_ptr = (struct response*) com_buf;
 
 	/* TODO:: check endian ordering */
 	response_ptr->sign_high	= SIGNATURE_0;
@@ -349,15 +348,15 @@ static void read_signature_bytes(void)
 	response_ptr->insync = Resp_STK_INSYNC;
 	response_ptr->status = Resp_STK_OK;
 
-	io_send(response_ptr, sizeof(*response_ptr));
+	com_send(response_ptr, sizeof(*response_ptr));
 }
 
 
 static void quick_universal_hack(void)
 {
-	if (io_buf[1] == 0x30)
+	if (com_buf[1] == 0x30)
 	{
-		switch (io_buf[3])
+		switch (com_buf[3])
 		{
 		case 0:
 			quick_byte_response(SIGNATURE_0);
@@ -381,13 +380,13 @@ static void quick_universal_hack(void)
 	quick_byte_response(0x00);
 }
 
-uint8_t io_connected(void)
+uint8_t com_connected(void)
 {
 	char c = '?';
-	io_send( &c, 1);
+	com_send(&c, 1);
 	//TODO set timer here!
-	io_recv();
-	if (io_buf[0] == ' ')
+	com_recv();
+	if (com_buf[0] == ' ')
 	{
 		return 1;
 	}
@@ -406,26 +405,26 @@ int main(void)
 
 //	memset((void*) &programming, 0, sizeof programming); //<- redundant memset; already done by __clear_bss
 
-	io_init();
+	com_init();
 
 	char str1[] = "Bootloader\n\r";
 	char str2[] = "Starting App ...\n\r";
-	io_send(str1, strlen(str1));
+	com_send(str1, strlen(str1));
 	
-	if (!io_connected())
+	if (!com_connected())
 	{
-		io_send(str2, strlen(str2));
+		com_send(str2, strlen(str2));
 		app_start();
 	}
 
 	for (;;)
 	{
-		if (io_recv() < 2)
+		if (com_recv() < 2)
 		{
 			continue;
 		}
 
-		switch (io_buf[0])
+		switch (com_buf[0])
 		{
 
 		/* Check if Starterkit Present */
