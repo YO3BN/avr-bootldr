@@ -382,15 +382,13 @@ static void quick_universal_hack(void)
 
 uint8_t com_connected(void)
 {
-	char c = '?';
-	com_send(&c, 1);
 	//TODO set timer here!
-	com_recv();
-	if (com_buf[0] == ' ')
+
+	if (com_recv())
 	{
 		return 1;
 	}
-	
+
 	return 0;
 }
 
@@ -409,13 +407,17 @@ int main(void)
 
 	char str1[] = "Bootloader\n\r";
 	char str2[] = "Starting App ...\n\r";
+	char str3[] = "\n\rDownload Mode\n\r";
+
 	com_send(str1, strlen(str1));
-	
+
 	if (!com_connected())
 	{
 		com_send(str2, strlen(str2));
 		app_start();
 	}
+
+	com_send(str3, strlen(str3));
 
 	for (;;)
 	{
